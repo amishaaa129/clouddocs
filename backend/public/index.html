@@ -1,0 +1,562 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CloudDocs</title>
+
+<style>
+:root {
+  --bg:#f5f7fb;
+  --card:#fff;
+  --tx:#1b2330;
+  --mut:#6b7686;
+  --pri:#ff9900;
+  --dark:#232f3e;
+  --bd:#e3e8ef;
+}
+
+* { box-sizing:border-box; }
+
+body {
+  margin:0;
+  font-family:system-ui,sans-serif;
+  background:var(--bg);
+  color:var(--tx);
+}
+
+header {
+  background:var(--dark);
+  color:#fff;
+  padding:14px 24px;
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+}
+
+header b { color:var(--pri); }
+
+main {
+  max-width:900px;
+  margin:24px auto;
+  padding:0 16px;
+}
+
+.card {
+  background:var(--card);
+  border:1px solid var(--bd);
+  border-radius:10px;
+  padding:20px;
+  margin-bottom:18px;
+}
+
+input {
+  padding:9px 12px;
+  border:1px solid var(--bd);
+  border-radius:6px;
+  font-size:14px;
+  width:100%;
+  margin:5px 0;
+}
+
+button {
+  background:var(--pri);
+  border:0;
+  border-radius:6px;
+  padding:8px 14px;
+  font-weight:600;
+  cursor:pointer;
+}
+
+button.sec { background:#e9edf3; }
+
+button.red {
+  background:#fde2e2;
+  color:#a32;
+}
+
+button.revoke {
+  background:#ffe0d9;
+  color:#a32;
+  padding:5px 10px;
+  font-size:12px;
+}
+
+button:disabled {
+  opacity:.55;
+  cursor:not-allowed;
+}
+
+.row {
+  display:flex;
+  gap:10px;
+  align-items:center;
+  flex-wrap:wrap;
+}
+
+.row input {
+  flex:1;
+  min-width:160px;
+  width:auto;
+}
+
+.doc {
+  border-top:1px solid var(--bd);
+  padding:12px 0;
+}
+
+.doc:first-child { border:0; }
+
+.meta {
+  color:var(--mut);
+  font-size:13px;
+  margin:3px 0;
+}
+
+.tag {
+  font-size:11px;
+  padding:2px 8px;
+  border-radius:10px;
+  background:#e9edf3;
+}
+
+.ok { background:#d9f5e1; }
+
+.pend { background:#fff1cc; }
+
+.err {
+  color:#a32;
+  font-size:14px;
+  min-height:18px;
+}
+
+.link {
+  background:none;
+  color:#06c;
+  padding:0;
+  font-weight:400;
+  text-decoration:underline;
+}
+
+.shared-user {
+  display:flex;
+  align-items:center;
+  gap:8px;
+  margin:5px 0;
+  flex-wrap:wrap;
+}
+</style>
+</head>
+
+<body>
+
+<header>
+  <div><b>&#9729; CloudDocs</b> &nbsp;Secure Document Management</div>
+  <div id="who"></div>
+</header>
+
+<main>
+
+<div id="auth" class="card" style="max-width:380px;margin:40px auto">
+  <h3 id="authTitle">Login</h3>
+
+  <input id="name" placeholder="Full name" hidden>
+  <input id="email" placeholder="Email" type="email">
+  <input id="pass" placeholder="Password (min 6 chars)" type="password">
+
+  <p class="err" id="authErr"></p>
+
+  <button id="authBtn">Login</button>
+  <button class="link" id="toggle">No account? Register</button>
+</div>
+
+<div id="app" hidden>
+
+  <div class="card">
+    <h3>Upload document</h3>
+
+    <div class="row">
+      <input type="file" id="file">
+      <button id="up">Upload</button>
+    </div>
+
+    <p class="err" id="upErr"></p>
+  </div>
+
+  <div class="card">
+
+    <div class="row">
+      <h3 style="margin:0">My documents</h3>
+
+      <input id="q"
+        placeholder="Search by name, keyword or content...">
+
+      <button class="sec" id="refresh">Refresh</button>
+    </div>
+
+    <div id="list"></div>
+
+  </div>
+</div>
+
+</main>
+
+<script>
+
+const $ = s => document.querySelector(s);
+
+let token = localStorage.getItem('t');
+
+let me = JSON.parse(
+  localStorage.getItem('u') || 'null'
+);
+
+let reg = false;
+
+const esc = s => String(s ?? '').replace(/[&<>"']/g,c=>({
+  '&':'&amp;',
+  '<':'&lt;',
+  '>':'&gt;',
+  '"':'&quot;',
+  "'":'&#39;'
+}[c]));
+
+async function api(p,o={}) {
+
+  o.headers = {
+    ...(o.headers || {}),
+    Authorization:'Bearer '+token
+  };
+
+  if(o.json) {
+    o.headers['Content-Type']='application/json';
+    o.body=JSON.stringify(o.json);
+  }
+
+  const r = await fetch('/api'+p,o);
+
+  const d = await r.json().catch(()=>({}));
+
+  if(r.status===401 && token) logout();
+
+  if(!r.ok) {
+    throw new Error(d.error || 'Request failed');
+  }
+
+  return d;
+}
+
+function show() {
+
+  const on = !!token && !!me;
+
+  $('#auth').hidden = on;
+  $('#app').hidden = !on;
+
+  $('#who').innerHTML = on
+    ? `${esc(me.name)} (${esc(me.role)})
+       <button class="sec" onclick="logout()">Logout</button>`
+    : '';
+
+  if(on) load();
+}
+
+function logout() {
+
+  token = null;
+  me = null;
+
+  localStorage.removeItem('t');
+  localStorage.removeItem('u');
+
+  show();
+}
+
+$('#toggle').onclick = () => {
+
+  reg = !reg;
+
+  $('#name').hidden = !reg;
+
+  $('#authTitle').textContent =
+  $('#authBtn').textContent =
+    reg ? 'Register' : 'Login';
+
+  $('#toggle').textContent =
+    reg ? 'Have an account? Login' : 'No account? Register';
+};
+
+$('#authBtn').onclick = async () => {
+
+  try {
+
+    const d = await fetch(
+      '/api/'+(reg?'register':'login'),
+      {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({
+          name:$('#name').value,
+          email:$('#email').value,
+          password:$('#pass').value
+        })
+      }
+    );
+
+    const j = await d.json();
+
+    if(!d.ok) throw new Error(j.error || 'Authentication failed');
+
+    token = j.token;
+    me = j.user;
+
+    localStorage.setItem('t',token);
+    localStorage.setItem('u',JSON.stringify(me));
+
+    $('#authErr').textContent='';
+
+    show();
+
+  } catch(e) {
+    $('#authErr').textContent=e.message;
+  }
+};
+
+$('#up').onclick = async () => {
+
+  const f = $('#file').files[0];
+
+  if(!f) {
+    $('#upErr').textContent='Choose a document first.';
+    return;
+  }
+
+  const fd = new FormData();
+
+  fd.append('file',f);
+
+  try {
+
+    $('#up').disabled=true;
+    $('#upErr').textContent='Uploading...';
+
+    await api('/documents',{
+      method:'POST',
+      body:fd
+    });
+
+    $('#upErr').textContent='Upload successful.';
+    $('#file').value='';
+
+    await load();
+
+  } catch(e) {
+
+    $('#upErr').textContent=e.message;
+
+  } finally {
+
+    $('#up').disabled=false;
+  }
+};
+
+async function load() {
+
+  try {
+
+    const docs = await api(
+      '/documents?q='+encodeURIComponent($('#q').value)
+    );
+
+    $('#list').innerHTML = docs.length
+      ? docs.map(d => {
+
+        const mine = d.owner === me.email;
+        const shared = d.sharedWith || [];
+
+        return `
+        <div class="doc">
+
+          <b>${esc(d.fileName)}</b>
+
+          <span class="tag ${
+            d.processingStatus === 'PROCESSED' ? 'ok' : 'pend'
+          }">${esc(d.processingStatus || 'PENDING')}</span>
+
+          ${mine ? '' :
+            `<span class="tag">shared by ${esc(d.owner)}</span>`
+          }
+
+          <div class="meta">
+            ${(Number(d.size || 0)/1024).toFixed(1)} KB
+            &middot;
+            ${d.uploadedAt
+              ? new Date(d.uploadedAt).toLocaleString()
+              : ''
+            }
+            ${d.wordCount ? ' &middot; '+d.wordCount+' words' : ''}
+          </div>
+
+          ${d.preview
+            ? `<div class="meta"><i>${esc(d.preview)}</i></div>`
+            : ''
+          }
+
+          ${mine && shared.length ? `
+            <div class="meta"><b>Shared with:</b></div>
+
+            ${shared.map(email => `
+              <div class="shared-user">
+
+                <span>${esc(email)}</span>
+
+                <button
+                  class="revoke"
+                  data-a="rv"
+                  data-id="${esc(d.docId)}"
+                  data-email="${esc(email)}">
+                  Revoke access
+                </button>
+
+              </div>
+            `).join('')}
+          ` : ''}
+
+          <div class="row">
+
+            <button data-a="dl" data-id="${esc(d.docId)}">
+              Download
+            </button>
+
+            ${mine ? `
+              <input
+                placeholder="Share with email"
+                id="s-${esc(d.docId)}"
+                style="max-width:220px">
+
+              <button
+                class="sec"
+                data-a="sh"
+                data-id="${esc(d.docId)}">
+                Share
+              </button>
+            ` : ''}
+
+            ${mine || me.role==='admin' ? `
+              <button
+                class="red"
+                data-a="rm"
+                data-id="${esc(d.docId)}">
+                Delete
+              </button>
+            ` : ''}
+
+          </div>
+
+        </div>
+        `;
+      }).join('')
+      : '<p class="meta">No documents found.</p>';
+
+  } catch(e) {
+
+    $('#list').innerHTML =
+      '<p class="err">'+esc(e.message)+'</p>';
+  }
+}
+
+$('#list').onclick = async e => {
+
+  const b = e.target.closest('button');
+
+  if(!b) return;
+
+  const id = b.dataset.id;
+
+  b.disabled = true;
+
+  try {
+
+    if(b.dataset.a==='dl') {
+
+      const result = await api(
+        `/documents/${encodeURIComponent(id)}/download`
+      );
+
+      window.open(result.url,'_blank','noopener');
+    }
+
+    if(b.dataset.a==='sh') {
+
+      const email = $('#s-'+CSS.escape(id)).value.trim();
+
+      if(!email) throw new Error('Enter an email address.');
+
+      await api(
+        `/documents/${encodeURIComponent(id)}/share`,
+        {
+          method:'POST',
+          json:{email}
+        }
+      );
+
+      alert('Document shared successfully.');
+
+      await load();
+    }
+
+    if(b.dataset.a==='rv') {
+
+      const email = b.dataset.email;
+
+      if(!confirm(`Revoke document access for ${email}?`)) return;
+
+      await api(
+        `/documents/${encodeURIComponent(id)}/share`,
+        {
+          method:'DELETE',
+          json:{email}
+        }
+      );
+
+      alert('Access revoked successfully.');
+
+      await load();
+    }
+
+    if(b.dataset.a==='rm' && confirm('Delete this document?')) {
+
+      await api(
+        '/documents/'+encodeURIComponent(id),
+        {method:'DELETE'}
+      );
+
+      await load();
+    }
+
+  } catch(err) {
+
+    alert(err.message);
+
+  } finally {
+
+    b.disabled=false;
+  }
+};
+
+$('#q').oninput = () => {
+
+  clearTimeout(window.searchTimer);
+
+  window.searchTimer = setTimeout(load,300);
+};
+
+$('#refresh').onclick = load;
+
+show();
+
+</script>
+
+</body>
+</html>
